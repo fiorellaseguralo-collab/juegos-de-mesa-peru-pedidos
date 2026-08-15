@@ -55,11 +55,13 @@ $("authMsg").textContent=t
 }
 
 async function start(){
-if(!db)return;
-$("session").textContent="☁️ Nube activa";
-let {data:{session}}=await db.auth.getSession();
 if(session){
 $("session").textContent=session.user.email;
+
+if($("vendedor_nombre")){
+  $("vendedor_nombre").value=session.user.email;
+}
+
 view("dashboard");
 await loadOrders()
 }
@@ -181,14 +183,45 @@ view("orders")
 function wa(id){
 let o=orders.find(x=>x.id===id);
 
-let text=`PEDIDO ${o.id}
-Cliente: ${o.cliente}
+llet text=`📋 FORMATO DE PEDIDO / VENTA – GRUPO BLAS
+
+👤 CLIENTE
+Nombre: ${o.cliente}
+DNI/RUC: ${o.doc||"-"}
+Teléfono: ${o.telefono||"-"}
+
+📍 ENTREGA
+Destino: ${o.direccion||"-"}
+Mov. cliente: ${money(o.mov_cliente)}
+Mov. tienda: ${money(o.mov_tienda)}
+Responsable: ${o.responsable_entrega||"-"}
+
+📦 PEDIDO
 Producto: ${o.producto}
 Cantidad: ${o.cantidad}
+Accesorios/Regalos: ${o.accesorios_regalos||"-"}
+
+💰 VENTA
+Precio unitario: ${money(o.precio)}
 Total: ${money(o.total)}
 Adelanto: ${money(o.adelanto)}
 Saldo: ${money(o.saldo)}
-Estado: ${o.estado}`;
+
+🧾 COMPROBANTE
+Tipo: ${o.comprobante||"-"}
+
+📲 COMERCIAL
+Canal: ${o.canal||"-"}
+Vendedor: ${o.vendedor_id||"-"}
+
+💳 PAGO
+Medio de pago: ${o.pago||"-"}
+
+📝 OBSERVACIONES
+${o.observaciones||"-"}
+
+🔄 ESTADO
+${o.estado}`;
 
 window.open(
 "https://wa.me/?text="+encodeURIComponent(text),
