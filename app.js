@@ -1,3 +1,4 @@
+```js
 const SUPABASE_URL = "https://uwybwpegcglpruhofvgt.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_gLS83x3VfiOREA-sn1jojA_TlDIMuUH";
 
@@ -8,6 +9,8 @@ const db = cloudReady
   : null;
 
 let orders = [];
+let currentUser = null;
+let currentProfile = null;
 
 /* =========================
    UTILIDADES
@@ -29,6 +32,7 @@ function value(id, fallback = "") {
 
 function setText(id, text) {
   const element = $(id);
+
   if (element) {
     element.textContent = text;
   }
@@ -84,42 +88,72 @@ function view(id) {
 }
 
 /* =========================
-   CÁLCULO DE VENTA
+   CÁLCULO
 ========================= */
 
 function calc() {
   const q = Number(value("cantidad", 0)) || 0;
   const p = Number(value("precio", 0)) || 0;
-
-  // Movilidad cliente SÍ se suma
   const mc = Number(value("movc", 0)) || 0;
-
-  // Movilidad tienda SOLO informativa
-  const mt = Number(value("movt", 0)) || 0;
-
   const adelanto = Number(value("adelanto", 0)) || 0;
 
   /*
-    TOTAL:
-    Cantidad x Precio + Movilidad Cliente
+    IMPORTANTE:
 
-    Movilidad tienda NO se suma.
+    Movilidad cliente SÍ suma.
+    Movilidad tienda NO suma.
   */
+
   const total = q * p + mc;
 
-  const saldo = Math.max(0, total - adelanto);
+  const saldo = Math.max(
+    0,
+    total - adelanto
+  );
 
   setText("total", money(total));
   setText("saldo", money(saldo));
 }
 
 /* =========================
-   AUTENTICACIÓN
+   PERFIL DEL USUARIO
+========================= */
+
+async function loadProfile(userId) {
+  if (!db || !userId) {
+    return null;
+  }
+
+  const {
+    data,
+    error
+  } = await db
+    .from("profiles")
+    .select("id, full_name, role, active")
+    .eq("id", userId)
+    .single();
+
+  if (error) {
+    console.error(
+      "Error cargando perfil:",
+      error
+    );
+
+    return null;
+  }
+
+  return data;
+}
+
+/* =========================
+   LOGIN
 ========================= */
 
 async function login() {
   if (!db) {
-    showMessage("Primero configura Supabase en app.js.");
+    showMessage(
+      "Primero configura Supabase en app.js."
+    );
     return;
   }
 
@@ -127,11 +161,15 @@ async function login() {
   const password = value("password");
 
   if (!email || !password) {
-    showMessage("Ingresa tu correo y contraseña.");
+    showMessage(
+      "Ingresa tu correo y contraseña."
+    );
     return;
   }
 
-  const { error } = await db.auth.signInWithPassword({
+  const {
+    error
+  } = await db.auth.signInWithPassword({
     email,
     password
   });
@@ -144,13 +182,17 @@ async function login() {
   showMessage("Acceso correcto.");
 
   await start();
-
-  view("dashboard");
 }
+
+/* =========================
+   REGISTRO
+========================= */
 
 async function signup() {
   if (!db) {
-    showMessage("Primero configura Supabase en app.js.");
+    showMessage(
+      "Primero configura Supabase en app.js."
+    );
     return;
   }
 
@@ -158,11 +200,15 @@ async function signup() {
   const password = value("password");
 
   if (!email || !password) {
-    showMessage("Ingresa correo y contraseña.");
+    showMessage(
+      "Ingresa correo y contraseña."
+    );
     return;
   }
 
-  const { error } = await db.auth.signUp({
+  const {
+    error
+  } = await db.auth.signUp({
     email,
     password
   });
@@ -177,41 +223,161 @@ async function signup() {
   );
 }
 
-async function start() {
+/* =========================
+   CERRAR SESIÓN
+========================= */
+
+async function logout() {
   if (!db) {
-    setText("session", "☁️ Supabase no configurado");
     return;
   }
 
   const {
-    data: { session },
+    error
+  } = await db.auth.signOut();
+
+  if (error) {
+    console.error(
+      "Error cerrando sesión:",
+      error
+    );
+
+    return;
+  }
+
+  currentUser = null;
+  currentProfile = null;
+  orders = [];
+
+  setText(
+    "session",
+    "Sin sesión"
+  );
+
+  view("login");
+}
+
+/* =========================
+   INICIAR APLICACIÓN
+========================= */
+
+async function start() {
+  if (!db) {
+    setText(
+      "session",
+      "☁️ Supabase no configurado"
+    );
+
+    view("login");
+
+    return;
+  }
+
+  const {
+    data: {
+      session
+    },
     error
   } = await db.auth.getSession();
 
   if (error) {
-    console.error("Error obteniendo sesión:", error);
+    console.error(
+      "Error obteniendo sesión:",
+      error
+    );
+
+    view("login");
+
     return;
   }
 
   if (!session) {
-    setText("session", "Sin sesión");
+    setText(
+      "session",
+      "Sin sesión"
+    );
+
     view("login");
+
     return;
   }
 
-  const email = session.user.email || "";
-
-  setText("session", email);
+  currentUser = session.user;
 
   /*
-    Si existe vendedor_nombre en el HTML,
-    mostramos automáticamente el correo del usuario.
+    Cargar perfil desde public.profiles
   */
-  const vendedorNombre = $("vendedor_nombre");
 
-  if (vendedorNombre && !vendedorNombre.value) {
-    vendedorNombre.value = email;
+  currentProfile = await loadProfile(
+    currentUser.id
+  );
+
+  if (!currentProfile) {
+    showMessage(
+      "El usuario existe en Authentication, pero no tiene un perfil en public.profiles."
+    );
+
+    await db.auth.signOut();
+
+    view("login");
+
+    return;
   }
+
+  /*
+    Comprobar usuario activo
+  */
+
+  if (!currentProfile.active) {
+    showMessage(
+      "Este usuario está desactivado."
+    );
+
+    await db.auth.signOut();
+
+    view("login");
+
+    return;
+  }
+
+  /*
+    Mostrar usuario
+  */
+
+  setText(
+    "session",
+    currentProfile.full_name ||
+    currentUser.email
+  );
+
+  /*
+    Mostrar vendedor automáticamente
+  */
+
+  const vendedorNombre =
+    $("vendedor_nombre");
+
+  if (vendedorNombre) {
+    vendedorNombre.value =
+      currentProfile.full_name ||
+      currentUser.email ||
+      "";
+  }
+
+  /*
+    Guardamos también el rol,
+    por si el HTML tiene algún elemento
+    para mostrarlo.
+  */
+
+  setText(
+    "userRole",
+    currentProfile.role
+  );
+
+  /*
+    Entrar al dashboard
+  */
 
   view("dashboard");
 
@@ -223,7 +389,7 @@ async function start() {
 ========================= */
 
 async function loadOrders() {
-  if (!db) {
+  if (!db || !currentUser) {
     return;
   }
 
@@ -238,7 +404,11 @@ async function loadOrders() {
     });
 
   if (error) {
-    console.error("Error cargando pedidos:", error);
+    console.error(
+      "Error cargando pedidos:",
+      error
+    );
+
     return;
   }
 
@@ -253,29 +423,50 @@ async function loadOrders() {
 ========================= */
 
 function updateDash() {
-  const totalVentas = orders.reduce(
-    (s, o) => s + Number(o.total || 0),
-    0
+  const totalVentas =
+    orders.reduce(
+      (s, o) =>
+        s + Number(o.total || 0),
+      0
+    );
+
+  const totalAdelantos =
+    orders.reduce(
+      (s, o) =>
+        s + Number(o.adelanto || 0),
+      0
+    );
+
+  const totalSaldos =
+    orders.reduce(
+      (s, o) =>
+        s + Number(o.saldo || 0),
+      0
+    );
+
+  setText(
+    "n",
+    orders.length
   );
 
-  const totalAdelantos = orders.reduce(
-    (s, o) => s + Number(o.adelanto || 0),
-    0
+  setText(
+    "sales",
+    money(totalVentas)
   );
 
-  const totalSaldos = orders.reduce(
-    (s, o) => s + Number(o.saldo || 0),
-    0
+  setText(
+    "adv",
+    money(totalAdelantos)
   );
 
-  setText("n", orders.length);
-  setText("sales", money(totalVentas));
-  setText("adv", money(totalAdelantos));
-  setText("bal", money(totalSaldos));
+  setText(
+    "bal",
+    money(totalSaldos)
+  );
 }
 
 /* =========================
-   TABLA DE PEDIDOS
+   TABLA
 ========================= */
 
 function render() {
@@ -287,231 +478,342 @@ function render() {
 
   const search = (
     value("search") || ""
-  ).toLowerCase().trim();
+  )
+    .toLowerCase()
+    .trim();
 
-  const filteredOrders = orders.filter(o => {
-    const texto = [
-      o.id,
-      o.cliente,
-      o.doc,
-      o.telefono,
-      o.producto,
-      o.estado,
-      o.vendedor_nombre
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
+  const filteredOrders =
+    orders.filter(o => {
 
-    return texto.includes(search);
-  });
+      const text = [
+        o.id,
+        o.cliente,
+        o.doc,
+        o.telefono,
+        o.producto,
+        o.estado,
+        o.vendedor_nombre
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
 
-  rows.innerHTML = filteredOrders
-    .map(o => {
-      const id = escapeHtml(o.id);
-      const fecha = o.created_at
-        ? new Date(o.created_at).toLocaleString("es-PE")
-        : "-";
+      return text.includes(search);
+    });
 
-      return `
-        <tr>
-          <td>${id}</td>
+  rows.innerHTML =
+    filteredOrders
+      .map(o => {
 
-          <td>
-            ${escapeHtml(fecha)}
-          </td>
+        const safeId =
+          String(o.id || "")
+            .replace(
+              /'/g,
+              "\\'"
+            );
 
-          <td>
-            ${escapeHtml(o.cliente || "-")}
-          </td>
+        const fecha =
+          o.created_at
+            ? new Date(
+                o.created_at
+              ).toLocaleString(
+                "es-PE"
+              )
+            : "-";
 
-          <td>
-            ${escapeHtml(o.producto || "-")}
-          </td>
+        return `
+          <tr>
 
-          <td>
-            ${money(o.total)}
-          </td>
+            <td>
+              ${escapeHtml(o.id || "-")}
+            </td>
 
-          <td>
-            ${money(o.adelanto)}
-          </td>
+            <td>
+              ${escapeHtml(fecha)}
+            </td>
 
-          <td>
-            ${money(o.saldo)}
-          </td>
+            <td>
+              ${escapeHtml(
+                o.cliente || "-"
+              )}
+            </td>
 
-          <td>
-            <span class="badge">
-              ${escapeHtml(o.estado || "-")}
-            </span>
-          </td>
+            <td>
+              ${escapeHtml(
+                o.producto || "-"
+              )}
+            </td>
 
-          <td>
-            <button
-              class="btn light"
-              type="button"
-              onclick="wa('${String(o.id).replace(/'/g, "\\'")}')"
-            >
-              WhatsApp
-            </button>
-          </td>
-        </tr>
-      `;
-    })
-    .join("");
+            <td>
+              ${money(o.total)}
+            </td>
+
+            <td>
+              ${money(o.adelanto)}
+            </td>
+
+            <td>
+              ${money(o.saldo)}
+            </td>
+
+            <td>
+              <span class="badge">
+                ${escapeHtml(
+                  o.estado || "-"
+                )}
+              </span>
+            </td>
+
+            <td>
+              <button
+                class="btn light"
+                type="button"
+                onclick="wa('${safeId}')"
+              >
+                WhatsApp
+              </button>
+            </td>
+
+          </tr>
+        `;
+      })
+      .join("");
 }
 
 /* =========================
-   CREAR PEDIDO
+   GUARDAR PEDIDO
 ========================= */
 
 async function saveOrder(event) {
   event.preventDefault();
 
   if (!db) {
-    alert("Configura Supabase primero.");
+    alert(
+      "Configura Supabase primero."
+    );
+
+    return;
+  }
+
+  if (!currentUser) {
+    alert(
+      "La sesión no está activa. Inicia sesión nuevamente."
+    );
+
+    view("login");
+
+    return;
+  }
+
+  if (!currentProfile) {
+    alert(
+      "No se encontró el perfil del usuario."
+    );
+
+    return;
+  }
+
+  if (!currentProfile.active) {
+    alert(
+      "Tu usuario está desactivado."
+    );
+
     return;
   }
 
   try {
-    /*
-      DATOS DEL PEDIDO
-    */
 
-    const q = Number(value("cantidad", 1)) || 1;
-    const p = Number(value("precio", 0)) || 0;
+    /* =====================
+       DATOS
+    ===================== */
 
-    // Movilidad cliente SÍ suma
-    const mc = Number(value("movc", 0)) || 0;
+    const q =
+      Number(
+        value("cantidad", 1)
+      ) || 1;
 
-    // Movilidad tienda NO suma
-    const mt = Number(value("movt", 0)) || 0;
+    const p =
+      Number(
+        value("precio", 0)
+      ) || 0;
 
-    const adelanto = Number(value("adelanto", 0)) || 0;
+    const mc =
+      Number(
+        value("movc", 0)
+      ) || 0;
 
-    /*
-      CÁLCULO
+    const mt =
+      Number(
+        value("movt", 0)
+      ) || 0;
 
-      Total = cantidad x precio + movilidad cliente
-
-      Movilidad tienda es únicamente informativa.
-    */
-
-    const total = q * p + mc;
-
-    const saldo = Math.max(
-      0,
-      total - adelanto
-    );
-
-    /*
-      USUARIO ACTUAL
-    */
-
-    const {
-      data: { user },
-      error: userError
-    } = await db.auth.getUser();
-
-    if (userError) {
-      console.error(userError);
-      alert("No se pudo obtener el usuario actual.");
-      return;
-    }
+    const adelanto =
+      Number(
+        value("adelanto", 0)
+      ) || 0;
 
     /*
-      NÚMERO DE PEDIDO
+      TOTAL
+
+      Cantidad x Precio
+      +
+      Movilidad cliente
+
+      Movilidad tienda NO suma.
     */
+
+    const total =
+      q * p + mc;
+
+    const saldo =
+      Math.max(
+        0,
+        total - adelanto
+      );
+
+    /* =====================
+       NÚMERO PEDIDO
+    ===================== */
 
     const {
       data: seq,
       error: seqError
-    } = await db.rpc("next_order_number");
+    } = await db.rpc(
+      "next_order_number"
+    );
 
     if (seqError) {
-      console.error(seqError);
+
+      console.error(
+        "Error generando número:",
+        seqError
+      );
+
       alert(
-        "No se pudo generar el número de pedido: " +
+        "No se pudo generar el número de pedido:\n\n" +
         seqError.message
       );
+
       return;
     }
 
     const id =
       "JMP-" +
-      String(seq || 1).padStart(5, "0");
+      String(
+        seq || 1
+      ).padStart(
+        5,
+        "0"
+      );
 
-    /*
-      VENDEDOR
+    /* =====================
+       VENDEDOR
+    ===================== */
 
-      Guardamos:
-      - vendedor_id = ID de Supabase
-      - vendedor_nombre = correo/nombre visible
-    */
+    const vendedorNombre =
+      currentProfile.full_name ||
+      currentUser.email ||
+      "";
 
-    let vendedorNombre =
-      value("vendedor_nombre").trim();
-
-    if (!vendedorNombre) {
-      vendedorNombre =
-        user?.email || "";
-    }
-
-    /*
-      PAYLOAD
-    */
+    /* =====================
+       PAYLOAD
+    ===================== */
 
     const payload = {
+
       id,
 
-      // CLIENTE
-      cliente: value("cliente").trim(),
-      doc: value("doc").trim(),
-      telefono: value("telefono").trim(),
+      /* CLIENTE */
 
-      // ENTREGA
-      direccion: value("direccion").trim(),
-      mov_cliente: mc,
-      mov_tienda: mt,
+      cliente:
+        value("cliente").trim(),
+
+      doc:
+        value("doc").trim(),
+
+      telefono:
+        value("telefono").trim(),
+
+      /* ENTREGA */
+
+      direccion:
+        value("direccion").trim(),
+
+      mov_cliente:
+        mc,
+
+      mov_tienda:
+        mt,
+
       responsable_entrega:
-        value("responsable_entrega").trim(),
+        value(
+          "responsable_entrega"
+        ).trim(),
 
-      // PEDIDO
-      producto: value("producto").trim(),
-      cantidad: q,
+      /* PEDIDO */
+
+      producto:
+        value("producto").trim(),
+
+      cantidad:
+        q,
+
       accesorios_regalos:
-        value("accesorios_regalos").trim(),
+        value(
+          "accesorios_regalos"
+        ).trim(),
 
-      // VENTA
-      precio: p,
-      total,
-      adelanto,
-      saldo,
+      /* VENTA */
 
-      // COMPROBANTE
+      precio:
+        p,
+
+      total:
+        total,
+
+      adelanto:
+        adelanto,
+
+      saldo:
+        saldo,
+
+      /* COMPROBANTE */
+
       comprobante:
-        value("comprobante").trim(),
+        value(
+          "comprobante"
+        ).trim(),
 
-      // COMERCIAL
-      canal: value("canal").trim(),
-      vendedor_id: user?.id || null,
-      vendedor_nombre: vendedorNombre,
+      /* COMERCIAL */
 
-      // PAGO
-      pago: value("pago").trim(),
+      canal:
+        value("canal").trim(),
 
-      // OBSERVACIONES
+      vendedor_id:
+        currentUser.id,
+
+      vendedor_nombre:
+        vendedorNombre,
+
+      /* PAGO */
+
+      pago:
+        value("pago").trim(),
+
+      /* OBSERVACIONES */
+
       observaciones:
         value("obs").trim(),
 
-      // ESTADO
-      estado: value("estado").trim()
+      /* ESTADO */
+
+      estado:
+        value("estado").trim()
     };
 
-    /*
-      GUARDAR EN SUPABASE
-    */
+    /* =====================
+       INSERTAR
+    ===================== */
 
     const {
       error: insertError
@@ -520,6 +822,7 @@ async function saveOrder(event) {
       .insert(payload);
 
     if (insertError) {
+
       console.error(
         "Error guardando pedido:",
         insertError
@@ -533,6 +836,10 @@ async function saveOrder(event) {
       return;
     }
 
+    /* =====================
+       ÉXITO
+    ===================== */
+
     alert(
       "Pedido " +
       id +
@@ -540,7 +847,7 @@ async function saveOrder(event) {
     );
 
     /*
-      LIMPIAR FORMULARIO
+      Limpiar formulario
     */
 
     event.target.reset();
@@ -550,8 +857,7 @@ async function saveOrder(event) {
     }
 
     /*
-      Volver a colocar automáticamente
-      el vendedor actual.
+      Restaurar vendedor
     */
 
     if ($("vendedor_nombre")) {
@@ -562,7 +868,7 @@ async function saveOrder(event) {
     calc();
 
     /*
-      ACTUALIZAR PEDIDOS
+      Actualizar información
     */
 
     await loadOrders();
@@ -570,6 +876,7 @@ async function saveOrder(event) {
     view("orders");
 
   } catch (error) {
+
     console.error(
       "Error inesperado:",
       error
@@ -587,78 +894,85 @@ async function saveOrder(event) {
 ========================= */
 
 function wa(id) {
-  const o = orders.find(
-    x => String(x.id) === String(id)
-  );
 
-  if (!o) {
-    alert("No se encontró el pedido.");
+  const order =
+    orders.find(
+      x =>
+        String(x.id) ===
+        String(id)
+    );
+
+  if (!order) {
+
+    alert(
+      "No se encontró el pedido."
+    );
+
     return;
   }
 
-  /*
-    VENDEDOR
-
-    Primero intenta usar vendedor_nombre.
-    Si no existe, muestra vendedor_id.
-  */
-
   const vendedor =
-    o.vendedor_nombre ||
-    o.vendedor_id ||
+    order.vendedor_nombre ||
     "-";
 
   const text = `📋 FORMATO DE PEDIDO / VENTA – GRUPO BLAS
 
 👤 CLIENTE
-Nombre: ${o.cliente || "-"}
-DNI/RUC: ${o.doc || "-"}
-Teléfono: ${o.telefono || "-"}
+Nombre: ${order.cliente || "-"}
+DNI/RUC: ${order.doc || "-"}
+Teléfono: ${order.telefono || "-"}
 
 📍 ENTREGA
-Destino: ${o.direccion || "-"}
-Mov. cliente: ${money(o.mov_cliente)}
-Mov. tienda: ${money(o.mov_tienda)}
-Responsable: ${o.responsable_entrega || "-"}
+Destino: ${order.direccion || "-"}
+Mov. cliente: ${money(order.mov_cliente)}
+Mov. tienda: ${money(order.mov_tienda)}
+Responsable: ${order.responsable_entrega || "-"}
 
 📦 PEDIDO
-Producto: ${o.producto || "-"}
-Cantidad: ${o.cantidad || 0}
-Accesorios/Regalos: ${o.accesorios_regalos || "-"}
+Producto: ${order.producto || "-"}
+Cantidad: ${order.cantidad || 0}
+Accesorios/Regalos: ${order.accesorios_regalos || "-"}
 
 💰 VENTA
-Precio unitario: ${money(o.precio)}
-Total: ${money(o.total)}
-Adelanto: ${money(o.adelanto)}
-Saldo: ${money(o.saldo)}
+Precio unitario: ${money(order.precio)}
+Total: ${money(order.total)}
+Adelanto: ${money(order.adelanto)}
+Saldo: ${money(order.saldo)}
 
 🧾 COMPROBANTE
-Tipo: ${o.comprobante || "-"}
+Tipo: ${order.comprobante || "-"}
 
 📲 COMERCIAL
-Canal: ${o.canal || "-"}
+Canal: ${order.canal || "-"}
 Vendedor: ${vendedor}
 
 💳 PAGO
-Medio de pago: ${o.pago || "-"}
+Medio de pago: ${order.pago || "-"}
 
 📝 OBSERVACIONES
-${o.observaciones || "-"}
+${order.observaciones || "-"}
 
 🔄 ESTADO
-${o.estado || "-"}`;
+${order.estado || "-"}`;
 
   const url =
     "https://wa.me/?text=" +
     encodeURIComponent(text);
 
-  window.open(url, "_blank");
+  window.open(
+    url,
+    "_blank"
+  );
 }
 
-/*
-  Necesario porque el HTML utiliza
-  onclick="wa('...')"
-*/
+/* =========================
+   EXPONER FUNCIONES AL HTML
+========================= */
+
+window.login = login;
+window.signup = signup;
+window.logout = logout;
+window.view = view;
 window.wa = wa;
 
 /* =========================
@@ -670,7 +984,7 @@ document.addEventListener(
   () => {
 
     /*
-      CÁLCULO AUTOMÁTICO
+      Cálculo automático
     */
 
     [
@@ -684,6 +998,7 @@ document.addEventListener(
       const element = $(id);
 
       if (element) {
+
         element.addEventListener(
           "input",
           calc
@@ -692,12 +1007,13 @@ document.addEventListener(
     });
 
     /*
-      FORMULARIO
+      Formulario
     */
 
     const form = $("form");
 
     if (form) {
+
       form.addEventListener(
         "submit",
         saveOrder
@@ -705,12 +1021,14 @@ document.addEventListener(
     }
 
     /*
-      BÚSQUEDA
+      Buscador
     */
 
-    const search = $("search");
+    const search =
+      $("search");
 
     if (search) {
+
       search.addEventListener(
         "input",
         render
@@ -718,7 +1036,7 @@ document.addEventListener(
     }
 
     /*
-      INICIAR APLICACIÓN
+      Iniciar
     */
 
     start();
@@ -726,3 +1044,4 @@ document.addEventListener(
     calc();
   }
 );
+```
