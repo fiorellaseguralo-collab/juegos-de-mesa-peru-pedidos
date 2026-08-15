@@ -20,7 +20,7 @@ let p=+$("precio").value||0;
 let mc=+$("movc").value||0;
 let mt=+$("movt").value||0;
 let a=+$("adelanto").value||0;
-let t=q*p+mc+mt;
+let t=q*p+mc;
 $("total").textContent=money(t);
 $("saldo").textContent=money(Math.max(0,t-a))
 }
@@ -135,7 +135,7 @@ let mc=+$("movc").value||0;
 let mt=+$("movt").value||0;
 let a=+$("adelanto").value||0;
 
-let t=q*p+mc+mt;
+let t=q*p+mc;
 
 let {data:{user}}=await db.auth.getUser();
 
