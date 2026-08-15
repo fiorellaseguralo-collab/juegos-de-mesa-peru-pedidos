@@ -160,9 +160,10 @@ canal:$("canal").value,
 pago:$("pago").value,
 estado:$("estado").value,
 observaciones:$("obs").value,
-vendedor_id:user?.id||null
+vendedor_id:user?.id||null,
+responsable_entrega:$("responsable_entrega").value,
+accesorios_regalos:$("accesorios_regalos").value
 };
-
 let {error}=await db.from("orders").insert(payload);
 
 if(error){
